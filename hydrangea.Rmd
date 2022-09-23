@@ -205,22 +205,21 @@ renderPlot({
 
 ```
 
-Notes
-=======================================================================
-
-Column
------------------------------------------------------------------------
-
-```{r}
-
-```
-
 References
 =======================================================================
 
 Column
 -----------------------------------------------------------------------
 
-```{r}
+criticality: Modeling Fissile Material Operations in Nuclear Facilities
+<br>
+[https://cran.rstudio.com/web/packages/criticality/index.html](https://cran.rstudio.com/web/packages/criticality/index.html)
+<br>
 
-```
+Analysis of Process Criticality Accident Risk Using a Metamodel-Driven Bayesian Network
+<br>
+W. Zywiec, T. Mazzuchi, S. Sarkani
+<br>
+Reliability Engineering and System Safety, 2021
+<br>
+[https://www.sciencedirect.com/science/article/abs/pii/S0951832020308152](https://www.sciencedirect.com/science/article/abs/pii/S0951832020308152)
