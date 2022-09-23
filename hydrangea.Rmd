@@ -1,0 +1,226 @@
+---
+title: 'Criticality Software Package'
+output:
+  flexdashboard::flex_dashboard:
+    social: menu
+    source_code: embed
+runtime: shiny
+---
+
+```{r setup, include = FALSE}
+
+library(criticality)
+library(flexdashboard)
+library(ggplot2)
+library(magrittr)
+library(shinyWidgets)
+
+```
+
+Column {.sidebar}
+=======================================================================
+
+```{r}
+
+if (Sys.info()[1] == 'Darwin') {
+  if (file.exists('/Volumes/LaCie/hydrangea')) {
+    ext.dir <- '/Volumes/LaCie/hydrangea'
+  } else {
+    ext.dir <- '/Users/Will/Desktop/extdata'
+  }
+} else {
+  if (file.exists('D:/hydrangea')) {
+    ext.dir <- 'D:/hydrangea'
+  } else {
+    ext.dir <- 'C:/Users/Will/Desktop/extdata'
+  }
+}
+
+textInput('ext.dir', label = 'external directory (full path)', value = ext.dir)
+textInput('training.dir', label = 'training directory (folder name)', value = 'test')
+textInput('facility.data', label = 'facility data (.csv file name)', value = 'b332.csv')
+
+```
+
+<br><b>Neural Network Metamodel</b>
+
+```{r}
+
+selectInput('code', label = 'code', choices = c('mcnp', 'cog (not supported)'))
+
+selectInput('batch.size', label = 'batch size', choices = c(8192, 32, 64, 128, 245, 512, 1024, 2048, 4096))
+selectInput('loss', label = 'loss function', choices = c('sse', 'mse'))
+selectInput('opt.alg', label = 'optimization algorithm', choices = c('adamax', 'adadelta', 'adagrad', 'adam', 'nadam', 'rmsprop'))
+
+textInput('layers', label = 'hidden layer architecture', value = '8192-256-256-256-256-16')
+numericInput('val.split', label = 'validation split', value = 0.2, step = 0.1)
+numericInput('ensemble.size', label = 'ensemble size', value = 3, step = 1)
+numericInput('epochs', label = 'epochs', value = 1500, step = 250)
+numericInput('learning.rate', label = 'learning rate', value = 0.00075, step = 0.00025)
+
+materialSwitch('replot', label = 'replot')
+materialSwitch('verbose', label = 'verbose')
+
+```
+
+<br><b>Risk Model</b>
+
+```{r}
+
+selectInput('dist', label = 'probability distribution', choices = c('gamma', 'gev', 'normal', 'log-normal', 'weibull'))
+numericInput('keff.cutoff', label = 'keff cutoff', value = 0.9, step = 0.1)
+numericInput('risk.pool', label = 'risk pool', value = 3, step = 1)
+textInput('sample.size', label = 'sample size', value = '1e+07')
+
+```
+
+<br><p>
+
+```{r}
+
+div(style='display:inline-block;width:50%;text-align: center;', actionButton('build', 'Build Models'))
+
+```
+
+</p>
+
+```{r}
+
+training.dir <- reactive({
+  paste0(input$ext.dir, '/', input$training.dir)
+})
+
+dataset <- reactive({
+  criticality::Tabulate(
+    code = input$code,
+    ext.dir = input$ext.dir)
+})
+
+metamodel <- reactive({
+  criticality::NN(
+    batch.size = input$batch.size,
+    code = input$code,
+    dataset = dataset(),
+    ensemble.size = input$ensemble.size,
+    epochs = input$epochs,
+    layers = input$layers,
+    loss = input$loss,
+    opt.alg = input$opt.alg,
+    learning.rate = input$learning.rate,
+    val.split = input$val.split,
+    overwrite = FALSE,
+    replot = input$replot,
+    verbose = input$verbose,
+    ext.dir = input$ext.dir,
+    training.dir = training.dir())
+})
+
+bn <- eventReactive(input$build, {
+  criticality::BN(
+    dist = input$dist,
+    facility.data = input$facility.data,
+    ext.dir = input$ext.dir)
+})
+
+risk <- eventReactive(input$build, {
+
+  risk <- criticality::Risk(
+    bn = bn(),
+    dist = input$dist,
+    facility.data = input$facility.data,
+    keff.cutoff = input$keff.cutoff,
+    metamodel = metamodel(),
+    risk.pool = input$risk.pool,
+    sample.size = as.numeric(input$sample.size),
+    ext.dir = input$ext.dir,
+    training.dir = training.dir())
+  
+  risk.dir <- paste0(input$ext.dir, '/risk/', gsub('.csv', '', input$facility.data), '-', input$dist, '-', formatC(input$sample.size, format = 'e', digits = 0))
+
+  if (input$keff.cutoff > 0) risk.dir <- paste0(risk.dir, '-', input$keff.cutoff)
+
+  file.copy(c(paste0(training.dir(), '/model-settings.txt')), paste0(risk.dir, '/model-settings.txt'))
+
+  return(risk)
+
+})
+
+```
+
+Models
+=======================================================================
+
+Column
+-----------------------------------------------------------------------
+
+```{r}
+
+training.data <- eventReactive(input$build, {
+  if (file.exists(paste0(training.dir(), '/training-data.csv'))) training.data <- utils::read.csv(paste0(training.dir(), '/training-data.csv'), fileEncoding = 'UTF-8-BOM')
+  return(training.data)
+})
+
+renderPlot({
+
+  training.error <- training.data()$keff - training.data()$avg
+  
+  px <- pretty(training.data()$keff)
+  py <- pretty(training.error)
+  
+  ggplot(as.data.frame(training.error), aes(x = training.data()$keff)) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 14), plot.title = element_text(size = 14, face = 'bold', hjust = 0.5), text = element_text(size = 14)) +
+  geom_point(aes(y = training.error)) +
+  scale_x_continuous(breaks = px) +
+  scale_y_continuous(breaks = py, limits = range(py)) +
+  ggtitle('Training Data') +
+  xlab('keff') +
+  ylab('keff - predicted keff') +
+  geom_hline(yintercept = mean(training.error), color = 'red', size = 0.7)
+  
+})
+
+renderPlot({
+
+  if (length(risk()[[1]]) <= 10) {
+    px <- c(1:length(risk()[[1]])) 
+  } else {
+    px <- pretty(c(1:length(risk()[[1]])))
+  }
+
+  py <- pretty(risk()[[1]])
+  
+  ggplot(as.data.frame(risk()[[1]]), aes(x = c(1:length(risk()[[1]])))) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 14), plot.title = element_text(size = 14, face = 'bold', hjust = 0.5), text = element_text(size = 14)) +
+  geom_hline(yintercept = mean(risk()[[1]]), color = 'red', size = 0.7) +
+  geom_point(aes(y = risk()[[1]])) +
+  scale_x_continuous(breaks = px) +
+  scale_y_continuous(breaks = py, limits = range(py), labels = function(x) format(x, scientific = TRUE)) +
+  ggtitle('Process Criticality Accident Risk') +
+  xlab('risk pool') +
+  ylab('risk')
+  
+})
+
+```
+
+Notes
+=======================================================================
+
+Column
+-----------------------------------------------------------------------
+
+```{r}
+
+```
+
+References
+=======================================================================
+
+Column
+-----------------------------------------------------------------------
+
+```{r}
+
+```
