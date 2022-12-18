@@ -1,5 +1,5 @@
 ---
-title: 'Criticality Software Package'
+title: 'Criticality Dashboard (Hydrangea)'
 output:
   flexdashboard::flex_dashboard:
     social: menu
@@ -7,13 +7,22 @@ output:
 runtime: shiny
 ---
 
-```{r setup, include = FALSE}
+```{r setup}
 
 library(criticality)
 library(flexdashboard)
 library(ggplot2)
 library(magrittr)
 library(shinyWidgets)
+
+# spline packages
+library(caret)
+library(dplyr)
+# library(ggplot2)
+# library(keras)
+# library(magrittr)
+library(metR)
+library(viridis)
 
 ```
 
@@ -54,7 +63,7 @@ selectInput('opt.alg', label = 'optimization algorithm', choices = c('adamax', '
 
 textInput('layers', label = 'hidden layer architecture', value = '8192-256-256-256-256-16')
 numericInput('val.split', label = 'validation split', value = 0.2, step = 0.1)
-numericInput('ensemble.size', label = 'ensemble size', value = 3, step = 1)
+numericInput('ensemble.size', label = 'ensemble size', value = 1, step = 1)
 numericInput('epochs', label = 'epochs', value = 1500, step = 250)
 numericInput('learning.rate', label = 'learning rate', value = 0.00075, step = 0.00025)
 
@@ -69,8 +78,8 @@ materialSwitch('verbose', label = 'verbose')
 
 selectInput('dist', label = 'probability distribution', choices = c('gamma', 'gev', 'normal', 'log-normal', 'weibull'))
 numericInput('keff.cutoff', label = 'keff cutoff', value = 0.9, step = 0.1)
-numericInput('risk.pool', label = 'risk pool', value = 3, step = 1)
-textInput('sample.size', label = 'sample size', value = '1e+07')
+numericInput('risk.pool', label = 'risk pool', value = 1, step = 1)
+textInput('sample.size', label = 'sample size', value = '1e+04')
 
 ```
 
@@ -168,15 +177,15 @@ renderPlot({
   py <- pretty(training.error)
   
   ggplot(as.data.frame(training.error), aes(x = training.data()$keff)) +
-  theme_bw() +
-  theme(axis.text = element_text(size = 14), plot.title = element_text(size = 14, face = 'bold', hjust = 0.5), text = element_text(size = 14)) +
-  geom_point(aes(y = training.error)) +
-  scale_x_continuous(breaks = px) +
-  scale_y_continuous(breaks = py, limits = range(py)) +
-  ggtitle('Training Data') +
-  xlab('keff') +
-  ylab('keff - predicted keff') +
-  geom_hline(yintercept = mean(training.error), color = 'red', size = 0.7)
+    theme_bw() +
+    theme(text = element_text(color = 'grey30', size = 13), axis.text = element_text(size = 13), plot.title = element_text(color = 'black', size = 14, face = 'bold', hjust = 0.5)) +
+    geom_point(aes(y = training.error)) +
+    scale_x_continuous(breaks = px) +
+    scale_y_continuous(breaks = py, limits = range(py)) +
+    ggtitle('Training Data') +
+    xlab('keff') +
+    ylab('keff - predicted keff') +
+    geom_hline(yintercept = mean(training.error), color = 'red', size = 0.7)
   
 })
 
@@ -188,18 +197,118 @@ renderPlot({
     px <- pretty(c(1:length(risk()[[1]])))
   }
 
-  py <- pretty(risk()[[1]])
+  if (mean(risk()[[1]]) == 0) {
+    py <- 0
+  } else {
+    py <- pretty(risk()[[1]])
+  }
   
   ggplot(as.data.frame(risk()[[1]]), aes(x = c(1:length(risk()[[1]])))) +
-  theme_bw() +
-  theme(axis.text = element_text(size = 14), plot.title = element_text(size = 14, face = 'bold', hjust = 0.5), text = element_text(size = 14)) +
-  geom_hline(yintercept = mean(risk()[[1]]), color = 'red', size = 0.7) +
-  geom_point(aes(y = risk()[[1]])) +
-  scale_x_continuous(breaks = px) +
-  scale_y_continuous(breaks = py, limits = range(py), labels = function(x) format(x, scientific = TRUE)) +
-  ggtitle('Process Criticality Accident Risk') +
-  xlab('risk pool') +
-  ylab('risk')
+    theme_bw() +
+    theme(text = element_text(color = 'grey30', size = 13), axis.text = element_text(size = 13), plot.title = element_text(color = 'black', size = 14, face = 'bold', hjust = 0.5)) +
+    geom_hline(yintercept = mean(risk()[[1]]), color = 'red', size = 0.7) +
+    geom_point(aes(y = risk()[[1]])) +
+    scale_x_continuous(breaks = px) +
+    scale_y_continuous(breaks = py, limits = range(py), labels = function(x) format(x, scientific = TRUE)) +
+    ggtitle('Process Criticality Accident Risk') +
+    xlab('risk pool') +
+    ylab('risk')
+  
+})
+
+```
+
+Plots
+=======================================================================
+
+Column
+-----------------------------------------------------------------------
+
+```{r}
+
+training.data <- eventReactive(input$build, {
+  if (file.exists(paste0(training.dir(), '/training-data.csv'))) training.data <- utils::read.csv(paste0(training.dir(), '/training-data.csv'), fileEncoding = 'UTF-8-BOM')
+  return(training.data)
+})
+
+renderPlot({
+
+  # set variables
+  mass <- seq(100, 8000, 100)
+  form <- c('alpha', 'puo2')
+  mod <- c('mgo', 'sepiolite', 'ch2', 'h2o', 'none')
+  rad <- seq(5, 47, 1)
+  ref <- c('al', 'be', 'du', 'graphite', 'pb', 'mgo', 'ch2', 'ss304', 'h2o', 'none')
+  thk <- seq(0, 6, 1) * 2.54
+  shape <- 'sph'
+
+  df <- expand.grid(mass, form, mod, rad, ref, thk, shape, stringsAsFactors = FALSE) %>% as.data.frame()
+  names(df) <- c('mass', 'form', 'mod', 'rad', 'ref', 'thk', 'shape')
+
+  # set Pu density (g/cc)
+  pu.density <- ifelse((df$form == 'alpha'), 19.86, 11.5)
+
+  # calculate vol (cc)
+  vol <- 4/3 * pi * df$rad^3
+
+  # fix mod, vol (cc), and rad (cm)
+  df$mod[vol <= df$mass / pu.density] <- 'none'
+  vol[vol <= df$mass / pu.density] <- df$mass / pu.density
+  df$rad <- (3/4 * vol / pi)^(1/3)
+
+  # fix ref and thk (cm)
+  df$ref[df$thk == 0] <- 'none'
+  df$thk[df$ref == 'none'] <- 0
+
+  # set conc (g/cc)
+  conc <- ifelse((vol == 0), 0, (df$mass / vol))
+
+  # set form, vol (cc), and conc (g/cc)
+  df$form <- ifelse((pu.density == 19.86), 'alpha', 'puo2')
+  df$vol <- vol
+  df$conc <- conc
+
+  # one-hot encode categorical variables
+  dummy <- dummyVars(~ ., data = dataset()$output[-c(9, 10)])
+  df <- data.frame(stats::predict(dummy, newdata = df))
+
+  # subset data frame
+  df <- new.df <- subset(df, formalpha == 1 & refnone == 1)
+
+  # scale data
+  df$mass <- scale(df$mass, center = dataset()$training.mean[1], scale = dataset()$training.sd[1])
+  df$rad <- scale(df$rad, center = dataset()$training.mean[2], scale = dataset()$training.sd[2])
+  df$thk <- scale(df$thk, center = dataset()$training.mean[3], scale = dataset()$training.sd[3])
+  df$vol <- scale(df$vol, center = dataset()$training.mean[4], scale = dataset()$training.sd[4])
+  df$conc <- scale(df$conc, center = dataset()$training.mean[5], scale = dataset()$training.sd[5])
+
+  # convert data frame to matrix (Keras requirement)
+  df <- as.matrix(df)
+
+  keff <- matrix(nrow = nrow(df), ncol = input$ensemble.size)
+
+  # for (i in 1:input$ensemble.size) {
+  #   keff[ , i] <- metamodel()[[1]][[i]] %>% predict(df)
+  # }
+  
+  keff[ , 1] <- metamodel()[[1]][[1]] %>% predict(df)
+  
+  new.df$keff <- rowMeans(keff)
+  
+  ggplot(subset(new.df, modh2o == 1) %>% unique(), aes(x = rad, y = mass, z = keff)) +
+    theme_bw() +
+    theme(text = element_text(color = 'grey30', size = 13), axis.text = element_text(size = 13), plot.title = element_text(color = 'black', size = 14, face = 'bold', hjust = 0.5)) +
+    geom_contour_filled(aes(z = keff), alpha = 0.7, linetype = 'solid') +
+    geom_text_contour(aes(z = keff), color = 'grey30', size = 4.5) +
+    scale_fill_viridis(option = 'mako', discrete = TRUE) +
+    scale_x_continuous(limits = c(5, 47), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(100, 4000), expand = c(0, 0)) +
+    theme(legend.position = 'none',
+          panel.grid = element_blank(),
+          panel.border = element_blank()) +
+    ggtitle('keff Contour Plot') +
+    xlab('radius (cm)') +
+    ylab('plutonium mass (g)')
   
 })
 
@@ -211,15 +320,19 @@ References
 Column
 -----------------------------------------------------------------------
 
-criticality: Modeling Fissile Material Operations in Nuclear Facilities
-<br>
-[https://cran.rstudio.com/web/packages/criticality/index.html](https://cran.rstudio.com/web/packages/criticality/index.html)
-<br>
+<b>Software Packages</b>
 
-Analysis of Process Criticality Accident Risk Using a Metamodel-Driven Bayesian Network
-<br>
-W. Zywiec, T. Mazzuchi, S. Sarkani
-<br>
-Reliability Engineering and System Safety, 2021
-<br>
+bnlearn: An R package for Bayesian Network Learning and Inference<br>
+[https://www.bnlearn.com/](https://www.bnlearn.com/)
+
+criticality: Modeling Fissile Material Operations in Nuclear Facilities<br>
+[https://github.com/willzywiec/criticality](https://github.com/willzywiec/criticality)
+
+hydrangea: Dashboard for the criticality Software Package<br>
+[https://github.com/willzywiec/hydrangea](https://github.com/willzywiec/hydrangea)
+
+<b>Papers and Presentations</b>
+
+Analysis of Process Criticality Accident Risk Using a Metamodel-Driven Bayesian Network<br>
+[https://github.com/willzywiec/dissertation](https://github.com/willzywiec/dissertation)
 [https://www.sciencedirect.com/science/article/abs/pii/S0951832020308152](https://www.sciencedirect.com/science/article/abs/pii/S0951832020308152)
