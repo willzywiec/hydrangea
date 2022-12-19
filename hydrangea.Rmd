@@ -1,5 +1,5 @@
 ---
-title: 'Criticality Dashboard (Hydrangea)'
+title: 'Criticality Dashboard'
 output:
   flexdashboard::flex_dashboard:
     social: menu
@@ -184,7 +184,7 @@ renderPlot({
     scale_y_continuous(breaks = py, limits = range(py)) +
     ggtitle('Training Data') +
     xlab('keff') +
-    ylab('keff - predicted keff') +
+    ylab('calculated keff - predicted keff') +
     geom_hline(yintercept = mean(training.error), color = 'red', size = 0.7)
   
 })
@@ -234,7 +234,7 @@ training.data <- eventReactive(input$build, {
 renderPlot({
 
   # set variables
-  mass <- seq(100, 8000, 100)
+  mass <- seq(100, 4000, 100)
   form <- c('alpha', 'puo2')
   mod <- c('mgo', 'sepiolite', 'ch2', 'h2o', 'none')
   rad <- seq(5, 47, 1)
@@ -290,17 +290,17 @@ renderPlot({
   # for (i in 1:input$ensemble.size) {
   #   keff[ , i] <- metamodel()[[1]][[i]] %>% predict(df)
   # }
-  
+
   keff[ , 1] <- metamodel()[[1]][[1]] %>% predict(df)
-  
+
   new.df$keff <- rowMeans(keff)
-  
+
   ggplot(subset(new.df, modh2o == 1) %>% unique(), aes(x = rad, y = mass, z = keff)) +
     theme_bw() +
     theme(text = element_text(color = 'grey30', size = 13), axis.text = element_text(size = 13), plot.title = element_text(color = 'black', size = 14, face = 'bold', hjust = 0.5)) +
-    geom_contour_filled(aes(z = keff), alpha = 0.7, linetype = 'solid') +
+    geom_contour_filled(aes(z = keff), alpha = 0.8) +
     geom_text_contour(aes(z = keff), color = 'grey30', size = 4.5) +
-    scale_fill_viridis(option = 'mako', discrete = TRUE) +
+    scale_fill_viridis(option = 'inferno', discrete = TRUE) +
     scale_x_continuous(limits = c(5, 47), expand = c(0, 0)) +
     scale_y_continuous(limits = c(100, 4000), expand = c(0, 0)) +
     theme(legend.position = 'none',
@@ -309,7 +309,7 @@ renderPlot({
     ggtitle('keff Contour Plot') +
     xlab('radius (cm)') +
     ylab('plutonium mass (g)')
-  
+
 })
 
 ```
